@@ -141,42 +141,11 @@ struct JsonArray extends JsonValue
 	endmethod
 endstruct
 
-// credits to ToukoAozaki
-private function StringHashCS takes string s returns integer
-	local integer ri = 0
-	local integer li = 0
-	local integer length = StringLength(s)
-	local string result = ""
-	local string ss
-	
-	loop
-		exitwhen ri >= length
-		set ss = SubString(s, ri, ri+1)
-		if ss == "\\" then
-			set result = result + SubString(s, li, ri) + "\\\\"
-			
-			set ri = ri + 1
-			set li = ri
-		elseif StringCase(ss, false) != ss then
-			// this is a uppercase character; make it different.
-			set result = result + SubString(s, li, ri) + "\\" + ss
-			
-			set ri = ri + 1
-			set li = ri
-		else
-			set ri = ri + 1
-		endif
-	endloop
-	
-	set result = result + SubString(s, li, length)
-	
-	return StringHash(result)
-endfunction
-
 private struct Link
-	Link prev
+	Link prev = 0
 	string key
 	JsonValue value
+	Link bucket = 0
 	
 	static method create takes string k, JsonValue v, Link prev returns thistype
 		local thistype this = allocate()
@@ -187,9 +156,18 @@ private struct Link
 	endmethod
 	
 	method onDestroy takes nothing returns nothing
+		local thistype bucket_it
 		loop
 		exitwhen this == 0
 			call .value.destroy()
+			if .bucket != 0 then
+				set bucket_it = .bucket
+				loop
+				exitwhen bucket_it == 0
+					call bucket_it.destroy()
+					set bucket_it = bucket_it.prev
+				endloop
+			endif
 			set this = this.prev
 		endloop
 		
@@ -201,20 +179,43 @@ struct JsonHash extends JsonValue
 	integer idx = 0
 	
 	method operator []= takes string k, JsonValue v returns nothing
-		local Link l = LoadInteger(ht, integer(this), StringHashCS(k))
+		local Link l = LoadInteger(ht, integer(this), StringHash(k))
+		local Link tmp = l
 		if integer(l) == 0 then
 			set .head = Link.create(k, v, head)
-		else
+			call SaveInteger(ht, integer(this), StringHash(k), .head)
+		elseif l.key == k then
 			set l.value = v
+		else
+			set l = l.bucket
+			loop
+			exitwhen l == 0
+				if l.key == k then
+					set l.value = v
+					return
+				endif
+				set l = l.prev
+			endloop
+			set tmp.bucket = Link.create(k, v, tmp.bucket)
 		endif
 	endmethod
 	
 	method operator [] takes string k returns JsonValue
-		local Link l = LoadInteger(ht, integer(this), StringHashCS(k))
+		local Link l = LoadInteger(ht, integer(this), StringHash(k))
 		if integer(l) == 0 then
 			return Null
-		else
+		elseif l.key == k then
 			return l.value
+		else
+			set l = l.bucket
+			loop
+			exitwhen l == 0
+				if l.key == k then
+					return l.value
+				endif
+				set l = l.prev
+			endloop
+			return Null
 		endif
 	endmethod
 	
@@ -225,6 +226,7 @@ struct JsonHash extends JsonValue
 	
 	method encode takes nothing returns string
 		local Link it = head
+		local Link bucket_it
 		local boolean after_first = false
 		local string accum = "{"
 		local JsonString tmp = JsonString.create("")
@@ -237,6 +239,18 @@ struct JsonHash extends JsonValue
 			endif
 			set tmp.value = it.key
 			set accum = accum + tmp.encode() +":"+ it.value.encode()
+			
+			if it.bucket != 0 then
+				set bucket_it = it.bucket
+				loop
+				exitwhen bucket_it == 0
+					set accum = accum + ","
+					set tmp.value = bucket_it.key
+					set accum = accum + tmp.encode() +":"+ bucket_it.value.encode()
+					set bucket_it = bucket_it.prev
+				endloop
+			endif
+			
 			set it = it.prev
 		endloop
 		return accum + "}"
