@@ -310,6 +310,8 @@ endglobals
 function decodeJson takes string s returns JsonValue
 	local integer length = StringLength(s)
 	local integer idx = 0
+    
+    local integer stringStart
 	
 	local string c
 	local string buffer
@@ -329,6 +331,7 @@ function decodeJson takes string s returns JsonValue
 		
 		if c == "\"" then
 			//! runtextmacro json__advance("quote at the end of input")
+            set stringStart = idx
 			
 			if not (state_stack[state_idx] == ARRAY_START or state_stack[state_idx] == ARRAY_COMMA_ENCOUNTERED /*
 				*/ or state_stack[state_idx] == HASH_START or state_stack[state_idx] == HASH_COMMA_ENCOUNTERED /*
@@ -342,7 +345,9 @@ function decodeJson takes string s returns JsonValue
 			exitwhen c == "\""
 			
 				if c == "\\" then
+                    set buffer = buffer + SubString(s, stringStart, idx)
 					//! runtextmacro json__advance("\\ at the end of input")
+                    set stringStart = idx
 
 					if c=="\\" then
 						set buffer = buffer +"\\"
@@ -359,13 +364,13 @@ function decodeJson takes string s returns JsonValue
 					else
 						call error("Unknown escape sequence '\\"+ c +"'.", idx)
 					endif
-				else
-					set buffer = buffer + c
-				endif		
+				endif
 				
 			set idx=idx+1
 			set c = SubString(s, idx, idx+1)
 			endloop
+            
+            set buffer = buffer + SubString(s, stringStart, idx)
 			
 			if state_stack[state_idx] == HASH_START or state_stack[state_idx] == HASH_COMMA_ENCOUNTERED then
 				set hashkey = buffer
