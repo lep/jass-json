@@ -1,24 +1,38 @@
 library Json initializer init
 
-globals	
-	private hashtable ht
+globals
 	private string array state_help
-	
-	public JsonValue Null
 endglobals
+
 
 interface JsonValue
 	method encode takes nothing returns string
 endinterface
 
+private keyword JsonNull
+
+globals
+	private hashtable ht
+	public JsonValue Null
+endglobals
+
+
+private function jsondestroy takes JsonValue v returns nothing
+    if v.getType() != JsonNull.typeid then
+        call v.destroy()
+    endif
+endfunction
+
+
+
 private struct JsonNull extends JsonValue
-	method onDestroy takes nothing returns nothing
-		set Null = thistype.create()
-	endmethod
-	
 	method encode takes nothing returns string
 		return "null"
 	endmethod
+    
+    method onDestroy takes nothing returns nothing
+        call BJDebugMsg("You are destroying Json_Null. Don't do that.")
+    endmethod
 endstruct
 
 struct JsonBool extends JsonValue
@@ -120,7 +134,7 @@ struct JsonArray extends JsonValue
 		local integer i = 0
 		loop
 		exitwhen i == .length
-			call this[i].destroy()
+            call jsondestroy(this[i])
 			set i = i+1
 		endloop
 		call FlushChildHashtable(ht, integer(this))
@@ -141,80 +155,62 @@ struct JsonArray extends JsonValue
 	endmethod
 endstruct
 
-private struct Link
-	Link prev = 0
-	string key
-	JsonValue value
-	Link bucket = 0
-	
-	static method create takes string k, JsonValue v, Link prev returns thistype
+private struct List
+    string key
+    JsonValue value
+    List tail
+    
+    static method create takes string k, JsonValue v, List tail returns thistype
 		local thistype this = allocate()
-		set .prev = prev
+		set .tail = tail
 		set .key = k
 		set .value = v
 		return this
 	endmethod
-	
-	method onDestroy takes nothing returns nothing
-		local thistype bucket_it
-		loop
-		exitwhen this == 0
-			call .value.destroy()
-			if .bucket != 0 then
-				set bucket_it = .bucket
-				loop
-				exitwhen bucket_it == 0
-					call bucket_it.destroy()
-					set bucket_it = bucket_it.prev
-				endloop
-			endif
-			set this = this.prev
-		endloop
-		
+    
+    method onDestroy takes nothing returns nothing
+        call jsondestroy(.value)
+        if .tail != 0 then
+            call .tail.destroy()
+        endif
 	endmethod
 endstruct
 
 struct JsonHash extends JsonValue
-	Link head = 0
-	integer idx = 0
+	List head = 0
 	
 	method operator []= takes string k, JsonValue v returns nothing
-		local Link l = LoadInteger(ht, integer(this), StringHash(k))
-		local Link tmp = l
+		local List l = LoadInteger(ht, integer(this), StringHash(k))
 		if integer(l) == 0 then
-			set .head = Link.create(k, v, head)
+			set .head = List.create(k, v, head)
 			call SaveInteger(ht, integer(this), StringHash(k), .head)
-		elseif l.key == k then
-			set l.value = v
 		else
-			set l = l.bucket
-			loop
-			exitwhen l == 0
-				if l.key == k then
-					set l.value = v
-					return
-				endif
-				set l = l.prev
-			endloop
-			set tmp.bucket = Link.create(k, v, tmp.bucket)
+            set l = .head
+            loop
+            exitwhen l == 0
+                if l.key == k then
+                    set l.value = v
+                    return
+                endif
+                set l = l.tail
+            endloop
+            set .head = List.create(k, v, .head)
 		endif
 	endmethod
 	
 	method operator [] takes string k returns JsonValue
-		local Link l = LoadInteger(ht, integer(this), StringHash(k))
+		local List l = LoadInteger(ht, integer(this), StringHash(k))
 		if integer(l) == 0 then
 			return Null
-		elseif l.key == k then
-			return l.value
 		else
-			set l = l.bucket
-			loop
-			exitwhen l == 0
-				if l.key == k then
-					return l.value
-				endif
-				set l = l.prev
-			endloop
+            set l = .head
+            loop
+            exitwhen l == 0
+                if l.key == k then
+                    return l.value
+                endif
+                set l = l.tail
+            endloop
 			return Null
 		endif
 	endmethod
@@ -224,9 +220,9 @@ struct JsonHash extends JsonValue
 		call FlushChildHashtable(ht, integer(this))
 	endmethod
 	
+    
 	method encode takes nothing returns string
-		local Link it = head
-		local Link bucket_it
+		local List it = head
 		local boolean after_first = false
 		local string accum = "{"
 		local JsonString tmp = JsonString.create("")
@@ -240,22 +236,15 @@ struct JsonHash extends JsonValue
 			set tmp.value = it.key
 			set accum = accum + tmp.encode() +":"+ it.value.encode()
 			
-			if it.bucket != 0 then
-				set bucket_it = it.bucket
-				loop
-				exitwhen bucket_it == 0
-					set accum = accum + ","
-					set tmp.value = bucket_it.key
-					set accum = accum + tmp.encode() +":"+ bucket_it.value.encode()
-					set bucket_it = bucket_it.prev
-				endloop
-			endif
-			
-			set it = it.prev
+			set it = it.tail
 		endloop
+        call tmp.destroy()
 		return accum + "}"
 	endmethod
+    
 endstruct
+
+
 
 private function error takes string s, integer idx returns nothing
 	local integer i
